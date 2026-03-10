@@ -1,5 +1,4 @@
 """FastAPI gateway for proposal-diagram-copilot"""
-import sys
 import os
 import uuid
 import asyncio
@@ -12,9 +11,6 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-
-# Add shared-types to path
-sys.path.insert(0, str(Path(__file__).parent.parent.parent / "packages" / "shared-types" / "src"))
 
 from shared_types import (
     JobStatus, OutputFormat, Job, Asset,
@@ -244,19 +240,18 @@ async def run_worker(job_id: str):
     
     asset = store.get_asset(job.asset_id)
     
-    # 阶段定义
+    # 阶段定义（不包括 done，done 在最后设置）
     stages = [
         ("preprocessing", 15),
         ("inferencing", 45),
         ("reconstructing", 75),
         ("scoring", 95),
-        ("done", 100)
     ]
     
     try:
         for stage_name, progress in stages:
             # 更新状态
-            job.status = JobStatus(stage_name) if stage_name != "done" else JobStatus.DONE
+            job.status = JobStatus(stage_name)
             job.stage = stage_name
             job.progress = progress
             store.update_job(job)

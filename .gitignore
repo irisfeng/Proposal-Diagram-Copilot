@@ -1,5 +1,4 @@
-# Dependencies
-node_modules/
+# Python
 .venv/
 __pycache__/
 *.pyc
@@ -8,23 +7,22 @@ __pycache__/
 dist/
 build/
 
+# Node
+node_modules/
+.next/
+out/
+
 # IDE
-.idea/
 .vscode/
-*.swp
-*.swo
+.idea/
 
 # OS
 .DS_Store
 Thumbs.db
 
-# Environment
-.env
-.env.local
-
-# Uploads/Outputs
-services/api/uploads/
-services/api/outputs/
-
-# Logs
-*.log
+# Project specific
+services/api/src/uploads/
+services/api/src/outputs/
+*.pptx
+*.png
+!apps/web/public/

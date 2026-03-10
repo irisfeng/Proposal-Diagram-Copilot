@@ -1,15 +1,10 @@
-'use client'
+import { useState, useEffect } from 'react'
 
-import { useState, useCallback } from 'react'
-import { Upload, FileImage, Loader2, Download, CheckCircle, AlertCircle } from 'lucide-react'
+const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'
-
-type JobStatus = 'queued' | 'preprocessing' | 'inferencing' | 'reconstructing' | 'scoring' | 'done' | 'failed_retryable' | 'failed_terminal'
-
-interface JobInfo {
+interface JobStatus {
   job_id: string
-  status: JobStatus
+  status: string
   progress: number
   stage: string
   result?: {
@@ -28,217 +23,228 @@ interface JobInfo {
 export default function Home() {
   const [file, setFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
-  const [job, setJob] = useState<JobInfo | null>(null)
+  const [assetId, setAssetId] = useState<string | null>(null)
+  const [jobId, setJobId] = useState<string | null>(null)
+  const [jobStatus, setJobStatus] = useState<JobStatus | null>(null)
   const [error, setError] = useState<string | null>(null)
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0]
-    if (f) {
-      setFile(f)
-      setError(null)
-      setJob(null)
+  // 轮询任务状态
+  useEffect(() => {
+    if (!jobId) return
+    
+    const poll = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/v1/jobs/${jobId}`)
+        const data = await res.json()
+        setJobStatus(data)
+        
+        // 完成或失败时停止轮询
+        if (data.status === 'done' || data.status === 'failed_terminal') {
+          return false
+        }
+        return true
+      } catch (e) {
+        console.error('Poll error:', e)
+        return true
+      }
     }
-  }
-
-  const pollJobStatus = useCallback(async (jobId: string) => {
-    const poll = async (): Promise<JobInfo> => {
-      const res = await fetch(`${API_URL}/v1/jobs/${jobId}`)
-      if (!res.ok) throw new Error('Failed to fetch job status')
-      return res.json()
-    }
-
-    let jobInfo = await poll()
-    setJob(jobInfo)
-
-    while (jobInfo.status !== 'done' && !jobInfo.status.startsWith('failed')) {
-      await new Promise(r => setTimeout(r, 1000))
-      jobInfo = await poll()
-      setJob(jobInfo)
-    }
-
-    return jobInfo
-  }, [])
+    
+    const interval = setInterval(async () => {
+      const shouldContinue = await poll()
+      if (!shouldContinue) {
+        clearInterval(interval)
+      }
+    }, 1000)
+    
+    return () => clearInterval(interval)
+  }, [jobId])
 
   const handleUpload = async () => {
     if (!file) return
-
+    
     setUploading(true)
     setError(null)
-    setJob(null)
-
+    
     try {
       // 1. 创建上传会话
-      const sessionRes = await fetch(`${API_URL}/v1/assets/upload-session`, {
+      const sessionRes = await fetch(`${API_BASE}/v1/assets/upload-session`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project_id: 'p_default',
+          project_id: 'proj_demo',
           filename: file.name,
           content_type: file.type,
-          size: file.size,
-        }),
+          size: file.size
+        })
       })
-      if (!sessionRes.ok) throw new Error('Failed to create upload session')
-      const { asset_id } = await sessionRes.json()
-
+      const session = await sessionRes.json()
+      setAssetId(session.asset_id)
+      
       // 2. 上传文件
       const formData = new FormData()
       formData.append('file', file)
-      const uploadRes = await fetch(`${API_URL}/v1/assets/upload/${asset_id}`, {
+      
+      await fetch(`${API_BASE}/v1/assets/upload/${session.asset_id}`, {
         method: 'POST',
-        body: formData,
+        body: formData
       })
-      if (!uploadRes.ok) throw new Error('Failed to upload file')
-
-      // 3. 创建任务
-      const jobRes = await fetch(`${API_URL}/v1/jobs`, {
+      
+      // 3. 创建转换任务
+      const jobRes = await fetch(`${API_BASE}/v1/jobs`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          project_id: 'p_default',
-          asset_id,
+          project_id: 'proj_demo',
+          asset_id: session.asset_id,
           output_format: 'pptx',
-          template_id: 'tpl_default',
-        }),
+          template_id: 'tpl_default'
+        })
       })
-      if (!jobRes.ok) throw new Error('Failed to create job')
-      const { job_id } = await jobRes.json()
-
-      // 4. 轮询状态
-      await pollJobStatus(job_id)
-
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error')
+      const job = await jobRes.json()
+      setJobId(job.job_id)
+      
+    } catch (e: any) {
+      setError(e.message || '上传失败')
     } finally {
       setUploading(false)
     }
   }
 
-  const handleDownload = async () => {
-    if (!job) return
-    window.open(`${API_URL}/v1/jobs/${job.job_id}/download`, '_blank')
+  const handleDownload = () => {
+    if (!jobId) return
+    window.open(`${API_BASE}/v1/jobs/${jobId}/download`, '_blank')
   }
 
-  const getStatusColor = (status: JobStatus) => {
-    if (status === 'done') return 'text-green-600'
-    if (status.startsWith('failed')) return 'text-red-600'
-    return 'text-blue-600'
-  }
-
-  const getStatusIcon = (status: JobStatus) => {
-    if (status === 'done') return <CheckCircle className="w-5 h-5 text-green-600" />
-    if (status.startsWith('failed')) return <AlertCircle className="w-5 h-5 text-red-600" />
-    return <Loader2 className="w-5 h-5 text-blue-600 animate-spin" />
+  const handleReset = () => {
+    setFile(null)
+    setAssetId(null)
+    setJobId(null)
+    setJobStatus(null)
+    setError(null)
   }
 
   return (
-    <main className="min-h-screen bg-gray-50 p-8">
-      <div className="max-w-3xl mx-auto">
-        <h1 className="text-3xl font-bold text-gray-900 mb-2">
-          Proposal Diagram Copilot
-        </h1>
-        <p className="text-gray-600 mb-8">
-          上传架构图 / 流程图，AI 自动转换为可编辑 PPTX
-        </p>
-
+    <main className="min-h-screen p-8">
+      <div className="max-w-2xl mx-auto">
+        <h1 className="text-3xl font-bold mb-2">Proposal Diagram Copilot</h1>
+        <p className="text-gray-600 mb-8">上传图片/PDF，AI 自动转换为可编辑 PPTX</p>
+        
         {/* 上传区域 */}
-        <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6 mb-6">
-          <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center hover:border-blue-400 transition-colors">
-            <input
-              type="file"
-              accept="image/*,.pdf"
-              onChange={handleFileChange}
-              className="hidden"
-              id="file-upload"
-            />
-            <label htmlFor="file-upload" className="cursor-pointer">
-              <Upload className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-              <p className="text-gray-600 mb-2">
-                {file ? file.name : '点击或拖拽上传图片 / PDF'}
-              </p>
-              <p className="text-sm text-gray-400">
-                支持 PNG, JPG, PDF
-              </p>
-            </label>
-          </div>
-
-          <button
-            onClick={handleUpload}
-            disabled={!file || uploading}
-            className="mt-4 w-full bg-blue-600 text-white py-3 px-6 rounded-lg font-medium disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-blue-700 transition-colors"
-          >
-            {uploading ? (
-              <span className="flex items-center justify-center gap-2">
-                <Loader2 className="w-5 h-5 animate-spin" />
-                处理中...
-              </span>
-            ) : (
-              '开始转换'
+        {!jobId && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center mb-4">
+              <input
+                type="file"
+                accept="image/*,.pdf"
+                onChange={(e) => setFile(e.target.files?.[0] || null)}
+                className="hidden"
+                id="file-upload"
+              />
+              <label htmlFor="file-upload" className="cursor-pointer">
+                {file ? (
+                  <div className="text-green-600">
+                    <p className="text-lg font-medium">{file.name}</p>
+                    <p className="text-sm">{(file.size / 1024).toFixed(1)} KB</p>
+                  </div>
+                ) : (
+                  <div className="text-gray-500">
+                    <p className="text-lg">点击选择文件</p>
+                    <p className="text-sm">支持 PNG, JPG, PDF</p>
+                  </div>
+                )}
+              </label>
+            </div>
+            
+            <button
+              onClick={handleUpload}
+              disabled={!file || uploading}
+              className="w-full bg-blue-600 text-white py-3 rounded-lg font-medium disabled:bg-gray-300 disabled:cursor-not-allowed hover:bg-blue-700 transition"
+            >
+              {uploading ? '上传中...' : '开始转换'}
+            </button>
+            
+            {error && (
+              <p className="mt-4 text-red-600 text-center">{error}</p>
             )}
-          </button>
-        </div>
-
-        {/* 错误提示 */}
-        {error && (
-          <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6 flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-600" />
-            <span className="text-red-700">{error}</span>
           </div>
         )}
-
-        {/* 任务状态 */}
-        {job && (
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
-            <div className="flex items-center gap-3 mb-4">
-              {getStatusIcon(job.status)}
-              <span className={`font-medium capitalize ${getStatusColor(job.status)}`}>
-                {job.stage} ({job.progress}%)
-              </span>
+        
+        {/* 进度区域 */}
+        {jobStatus && jobStatus.status !== 'done' && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-xl font-bold mb-4">转换进度</h2>
+            
+            <div className="mb-4">
+              <div className="flex justify-between text-sm mb-1">
+                <span>{jobStatus.stage}</span>
+                <span>{jobStatus.progress}%</span>
+              </div>
+              <div className="h-3 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className="h-full bg-blue-600 transition-all duration-300"
+                  style={{ width: `${jobStatus.progress}%` }}
+                />
+              </div>
             </div>
-
-            {/* 进度条 */}
-            <div className="w-full bg-gray-200 rounded-full h-2 mb-6">
-              <div
-                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                style={{ width: `${job.progress}%` }}
-              />
-            </div>
-
-            {/* 质量评分 */}
-            {job.result?.quality && (
-              <div className="bg-gray-50 rounded-lg p-4 mb-6">
-                <h3 className="font-medium text-gray-900 mb-3">质量评分</h3>
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div>
-                    <span className="text-gray-500">可编辑率</span>
-                    <span className="float-right font-medium">{(job.result.quality.editable_rate * 100).toFixed(0)}%</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">OCR 准确率</span>
-                    <span className="float-right font-medium">{(job.result.quality.ocr_accuracy * 100).toFixed(0)}%</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500">布局偏差</span>
-                    <span className="float-right font-medium">{(job.result.quality.layout_deviation * 100).toFixed(0)}%</span>
-                  </div>
-                  <div>
-                    <span className="text-gray-500 font-medium">综合评分</span>
-                    <span className="float-right font-bold text-lg text-blue-600">{job.result.quality.score}</span>
-                  </div>
+            
+            <p className="text-gray-500 text-sm">任务 ID: {jobStatus.job_id}</p>
+          </div>
+        )}
+        
+        {/* 结果区域 */}
+        {jobStatus && jobStatus.status === 'done' && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-xl font-bold mb-4">转换完成!</h2>
+            
+            {jobStatus.result?.quality && (
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="bg-gray-50 p-3 rounded">
+                  <p className="text-sm text-gray-600">质量评分</p>
+                  <p className="text-2xl font-bold text-green-600">{jobStatus.result.quality.score}</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded">
+                  <p className="text-sm text-gray-600">可编辑率</p>
+                  <p className="text-2xl font-bold">{(jobStatus.result.quality.editable_rate * 100).toFixed(0)}%</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded">
+                  <p className="text-sm text-gray-600">OCR 准确率</p>
+                  <p className="text-2xl font-bold">{(jobStatus.result.quality.ocr_accuracy * 100).toFixed(0)}%</p>
+                </div>
+                <div className="bg-gray-50 p-3 rounded">
+                  <p className="text-sm text-gray-600">布局偏差</p>
+                  <p className="text-2xl font-bold">{(jobStatus.result.quality.layout_deviation * 100).toFixed(1)}%</p>
                 </div>
               </div>
             )}
-
-            {/* 下载按钮 */}
-            {job.status === 'done' && (
+            
+            <div className="flex gap-4">
               <button
                 onClick={handleDownload}
-                className="w-full bg-green-600 text-white py-3 px-6 rounded-lg font-medium hover:bg-green-700 transition-colors flex items-center justify-center gap-2"
+                className="flex-1 bg-green-600 text-white py-3 rounded-lg font-medium hover:bg-green-700 transition"
               >
-                <Download className="w-5 h-5" />
                 下载 PPTX
               </button>
-            )}
+              <button
+                onClick={handleReset}
+                className="flex-1 bg-gray-200 text-gray-700 py-3 rounded-lg font-medium hover:bg-gray-300 transition"
+              >
+                重新上传
+              </button>
+            </div>
+          </div>
+        )}
+        
+        {/* 错误区域 */}
+        {jobStatus && jobStatus.status === 'failed_terminal' && (
+          <div className="bg-red-50 rounded-lg p-6 mb-6">
+            <h2 className="text-xl font-bold text-red-600 mb-2">转换失败</h2>
+            <p className="text-red-600">{jobStatus.error_message}</p>
+            <button
+              onClick={handleReset}
+              className="mt-4 bg-gray-200 text-gray-700 px-6 py-2 rounded-lg font-medium hover:bg-gray-300 transition"
+            >
+              重试
+            </button>
           </div>
         )}
       </div>

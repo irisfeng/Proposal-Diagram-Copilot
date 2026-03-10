@@ -1,0 +1,19 @@
+{
+  "name": "proposal-diagram-copilot",
+  "version": "0.1.0",
+  "private": true,
+  "description": "AI 驱动的方案图转换工具",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:web": "cd apps/web && npm run dev",
+    "dev:api": "cd services/api && python -m uvicorn src.main:app --reload --port 8000",
+    "install:all": "npm install && cd services/api && pip install -e . && cd ../.."
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
