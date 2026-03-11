@@ -1,159 +1,130 @@
 # Proposal Diagram Copilot
 
-> AI 驱动的方案图转换工具 - 把不可编辑的图片/PDF 转换成可编辑的 PPTX
+AI 驱动的方案图转换 MVP：把不可编辑图片/PDF，转成可编辑 PPTX。
 
-## 功能
+## 在线演示能力（当前 MVP）
 
-- ✅ 上传图片/PDF 文件
-- ✅ 自动转换为可编辑 PPTX
-- ✅ 质量评分（可编辑率、OCR 准确率、布局偏差）
-- ✅ 实时进度显示
-- ✅ 一键下载结果
+- 上传图片/PDF
+- 创建转换任务
+- 实时查看任务阶段与进度
+- 返回质量评分（可编辑率 / OCR 准确率 / 布局偏差）
+- 下载示例 PPTX
 
-## 技术栈
+> 当前为 MVP：转换流程与任务系统完整可跑，推理部分为 stub worker（用于验证端到端链路）。
 
-- **前端**: Next.js 15 + React 19 + Tailwind CSS + Zustand
-- **后端**: FastAPI + Pydantic
-- **推理**: 模拟 Worker（MVP 阶段）
-- **存储**: 内存（可选 Redis）
+---
 
-## 目录结构
+## 技术架构
 
-```
+- **Web**: Next.js 15 + React 19 + Tailwind
+- **API**: FastAPI + Pydantic
+- **Worker**: 内置模拟 pipeline（可替换为真实 GPU Worker）
+- **Queue**: 内存队列（后续可切 Redis）
+
+目录结构：
+
+```bash
 proposal-diagram-copilot/
-├── apps/
-│   └── web/                    # Next.js 前端
-│       ├── src/app/
-│       │   ├── page.tsx        # 主页面（上传/进度/下载）
-│       │   ├── layout.tsx
-│       │   └── globals.css
-│       ├── package.json
-│       └── next.config.ts
-├── services/
-│   └── api/                    # FastAPI 网关
-│       ├── src/main.py         # API + Worker
-│       └── pyproject.toml
-├── workers/
-│   └── gpu-engine/             # GPU 推理（Stub）
-├── packages/
-│   └── shared-types/           # 共享类型定义
-│       └── src/shared_types/
-├── start.sh                    # 一键启动（含安装）
-├── dev.sh                      # 快速启动（跳过安装）
-└── README.md
+├─ apps/
+│  └─ web/                  # 前端（上传/进度/下载）
+├─ services/
+│  └─ api/                  # 后端 API + 任务编排
+├─ workers/
+│  └─ gpu-engine/           # 预留 GPU 推理服务
+├─ packages/
+│  └─ shared-types/         # 共享类型
+├─ start.sh                 # 一键安装+启动
+├─ dev.sh                   # 快速启动
+└─ README.md
 ```
 
-## 快速开始
+---
 
-### 方式 1: 一键启动
+## 快速启动
+
+### 方式 1（推荐）：一键启动
 
 ```bash
 ./start.sh
 ```
 
-首次运行会自动安装依赖，然后启动：
-- API: http://localhost:8000
-- Web: http://localhost:3000
+默认会启动：
+- API: `http://localhost:8000`
+- API 文档: `http://localhost:8000/docs`
+- Web: `http://localhost:3000`
 
-### 方式 2: 手动启动
+### 方式 2：开发模式快速启动
 
 ```bash
-# 安装 Python 依赖
+./dev.sh
+```
+
+> 若 3000 端口被占用，Next.js 会自动切到 3001。
+
+---
+
+## 本地手动启动
+
+```bash
+# 1) API 依赖
 cd services/api
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e .
 
-# 安装 Node.js 依赖
+# 2) Web 依赖
 cd ../../apps/web
 npm install
 
-# 启动 API (终端1)
-cd services/api
+# 3) 启动 API (终端 A)
+cd ../../services/api
 source .venv/bin/activate
 python -m uvicorn src.main:app --reload --port 8000
 
-# 启动 Web (终端2)
-cd apps/web
+# 4) 启动 Web (终端 B)
+cd ../../apps/web
 npm run dev
 ```
 
-## API 接口
+---
 
-### 健康检查
-```
-GET /v1/health
-```
+## API 一览
 
-### 创建上传会话
-```
-POST /v1/assets/upload-session
-Body: { project_id, filename, content_type, size }
-返回: { asset_id, upload_url, expire_at }
-```
+- `GET /v1/health` 健康检查
+- `POST /v1/assets/upload-session` 创建上传会话
+- `POST /v1/assets/upload/{asset_id}` 上传文件
+- `POST /v1/jobs` 创建任务
+- `GET /v1/jobs/{job_id}` 查询任务状态
+- `GET /v1/jobs/{job_id}/result` 查询结果信息
+- `GET /v1/jobs/{job_id}/download` 下载 PPTX
 
-### 上传文件
-```
-POST /v1/assets/upload/{asset_id}
-Body: multipart/form-data (file)
-```
+---
 
-### 创建转换任务
-```
-POST /v1/jobs
-Body: { project_id, asset_id, output_format, template_id, options }
-返回: { job_id, status }
-```
+## MVP 状态
 
-### 查询任务状态
-```
-GET /v1/jobs/{job_id}
-返回: { job_id, status, progress, stage, result?, quality? }
-```
+### 已完成
+- Monorepo 基础结构
+- 端到端任务链路（上传 -> 入队 -> 处理 -> 下载）
+- 任务状态机与进度回传
+- 质量评分字段输出
+- Web 基础交互页
 
-### 下载结果
-```
-GET /v1/jobs/{job_id}/download
-返回: PPTX 文件流
-```
+### 待增强（V1）
+- 接入真实推理：SAM3 + OCR + 结构重建
+- Redis 队列与多 worker
+- 对象存储（S3/MinIO）
+- 用户鉴权与组织权限
+- 模板系统（企业主题）
+- 在线编辑器
 
-## 开发状态
+---
 
-### 已完成 (MVP)
-- [x] Monorepo 骨架
-- [x] API 基础接口（health, assets, jobs）
-- [x] 内存队列（无 Redis fallback）
-- [x] 模拟 Worker（进度 + 生成示例 PPTX）
-- [x] Web 上传/进度/下载闭环
-- [x] 一键启动脚本
+## 版本标记
 
-### 未完成
-- [ ] 真实 GPU 推理（SAM3 + OCR + PPTX 重建）
-- [ ] Redis 队列支持
-- [ ] 对象存储（S3/MinIO）
-- [ ] 用户鉴权（JWT）
-- [ ] 模板系统
-- [ ] 在线编辑器
+- `v0.1.0-mvp`: 首个可运行 MVP 里程碑版本
 
-## 下一步建议
+---
 
-1. **集成真实推理引擎**
-   - 对接 SAM3 分割模型
-   - 集成 OCR（PaddleOCR / Tesseract）
-   - 实现 Drawio XML / PPTX 重建逻辑
-
-2. **生产级改造**
-   - Redis 队列（多 worker 支持）
-   - Postgres 数据库（持久化）
-   - S3 兼容对象存储
-   - JWT 鉴权
-
-3. **功能增强**
-   - 模板系统（主题色、字体、Logo）
-   - 在线编辑器（元素级修订）
-   - 批量转换
-   - 文本指令改图
-
-## 许可
+## License
 
 MIT
