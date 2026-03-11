@@ -33,10 +33,30 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# CORS for Next.js
+# CORS for Next.js (dev ports + configurable origins)
+def _build_cors_origins() -> list[str]:
+    defaults = [
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "http://127.0.0.1:3001",
+    ]
+    env_value = os.getenv("CORS_ORIGINS", "").strip()
+    if not env_value:
+        return defaults
+    extra = [v.strip() for v in env_value.split(",") if v.strip()]
+    # 去重但保序
+    seen = set()
+    merged = []
+    for origin in defaults + extra:
+        if origin not in seen:
+            seen.add(origin)
+            merged.append(origin)
+    return merged
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origins=_build_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
